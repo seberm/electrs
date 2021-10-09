@@ -121,3 +121,8 @@ name = "server_banner"
 type = "String"
 doc = "The banner to be shown in the Electrum console"
 default = "concat!(\"Welcome to electrs \", env!(\"CARGO_PKG_VERSION\"), \" (Electrum Rust Server)!\").to_owned()"
+
+[[param]]
+name = "cache_db_dir"
+type = "std::path::PathBuf"
+doc = "Directory to store server-side cache database (default: disabled for privacy considerations)"

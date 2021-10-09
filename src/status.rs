@@ -20,14 +20,17 @@ use crate::{
 };
 
 /// Given a scripthash, store relevant inputs and outputs of a specific transaction
-struct TxEntry {
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct TxEntry {
     txid: Txid,
     outputs: Vec<TxOutput>, // relevant funded outputs and their amounts
     spent: Vec<OutPoint>,   // relevant spent outpoints
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct TxOutput {
     index: u32,
+    #[serde(with = "bitcoin::util::amount::serde::as_sat")]
     value: Amount,
 }
 
@@ -231,6 +234,20 @@ impl ScriptHashStatus {
         }
     }
 
+    /// Return non-synced (empty) status for a given script hash.
+    pub(crate) fn load(scripthash: ScriptHash, cache: &Cache) -> Self {
+        let mut result = Self::new(scripthash);
+        result.confirmed = cache.get_status_entries(scripthash);
+        if !result.confirmed.is_empty() {
+            debug!(
+                "{} status transaction entries loaded from {} blocks",
+                result.confirmed.values().map(Vec::len).sum::<usize>(),
+                result.confirmed.len()
+            );
+        }
+        result
+    }
+
     /// Iterate through confirmed TxEntries with their corresponding block heights.
     /// Skip entries from stale blocks.
     fn confirmed_height_entries<'a>(
@@ -371,7 +388,7 @@ impl ScriptHashStatus {
         })?;
 
         Ok(result
-            .into_iter()
+            .into_par_iter()
             .map(|(blockhash, entries_map)| {
                 // sort transactions by their position in a block
                 let sorted_entries = entries_map
@@ -380,6 +397,7 @@ impl ScriptHashStatus {
                     .into_iter()
                     .map(|(_pos, entry)| entry)
                     .collect::<Vec<TxEntry>>();
+                cache.add_status_entry(self.scripthash, blockhash, &sorted_entries);
                 (blockhash, sorted_entries)
             })
             .collect())

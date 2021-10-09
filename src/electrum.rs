@@ -133,7 +133,7 @@ impl Rpc {
         let tracker = Tracker::new(config, metrics)?;
         let signal = Signal::new();
         let daemon = Daemon::connect(config, signal.exit_flag(), tracker.metrics())?;
-        let cache = Cache::new(tracker.metrics());
+        let cache = Cache::new(tracker.metrics(), config.cache_db_path.as_ref());
         Ok(Self {
             tracker,
             cache,
@@ -333,7 +333,7 @@ impl Rpc {
     }
 
     fn new_status(&self, scripthash: ScriptHash) -> Result<ScriptHashStatus> {
-        let mut status = ScriptHashStatus::new(scripthash);
+        let mut status = ScriptHashStatus::load(scripthash, &self.cache);
         self.tracker
             .update_scripthash_status(&mut status, &self.daemon, &self.cache)?;
         Ok(status)
