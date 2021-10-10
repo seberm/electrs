@@ -70,6 +70,7 @@ pub struct Index {
     lookup_limit: Option<usize>,
     chain: Chain,
     stats: Stats,
+    is_ready: bool,
 }
 
 impl Index {
@@ -102,6 +103,7 @@ impl Index {
             lookup_limit,
             chain,
             stats,
+            is_ready: false,
         })
     }
 
@@ -170,57 +172,61 @@ impl Index {
         );
     }
 
-    pub(crate) fn sync(&mut self, daemon: &Daemon, exit_flag: &ExitFlag) -> Result<()> {
-        loop {
+    // TODO: refactor into an iterator
+    pub(crate) fn sync(&mut self, daemon: &Daemon, exit_flag: &ExitFlag) -> Result<bool> {
+        self.stats
+            .db_size
+            .set("total", self.store.get_size()? as f64);
+        let new_headers =
+            self.observe_duration("headers", || daemon.get_new_headers(&self.chain))?;
+        if new_headers.is_empty() {
+            self.store.flush();
+            self.is_ready = true; // full compaction is performed on 1st flush call
+            return Ok(true); // no more blocks to index (done for now)
+        }
+        info!(
+            "indexing {} blocks: [{}..{}]",
+            new_headers.len(),
+            new_headers.first().unwrap().height(),
+            new_headers.last().unwrap().height()
+        );
+        for chunk in new_headers.chunks(self.batch_size) {
+            exit_flag.poll().with_context(|| {
+                format!(
+                    "indexing interrupted at height: {}",
+                    chunk.first().unwrap().height()
+                )
+            })?;
+            let blockhashes: Vec<BlockHash> = chunk.iter().map(|h| h.hash()).collect();
+            let mut heights = chunk.iter().map(|h| h.height());
+
+            let mut batch = WriteBatch::default();
+            daemon.for_blocks(blockhashes, |_blockhash, block| {
+                let height = heights.next().expect("unexpected block");
+                self.observe_duration("block", || {
+                    index_single_block(block, height).extend(&mut batch)
+                });
+                self.stats.height.set("tip", height as f64);
+            })?;
+            let heights: Vec<_> = heights.collect();
+            assert!(
+                heights.is_empty(),
+                "some blocks were not indexed: {:?}",
+                heights
+            );
+            batch.sort();
+            self.report_stats(&batch);
+            self.observe_duration("write", || self.store.write(batch));
             self.stats
                 .db_size
                 .set("total", self.store.get_size()? as f64);
-            let new_headers =
-                self.observe_duration("headers", || daemon.get_new_headers(&self.chain))?;
-            if new_headers.is_empty() {
-                break;
-            }
-            info!(
-                "indexing {} blocks: [{}..{}]",
-                new_headers.len(),
-                new_headers.first().unwrap().height(),
-                new_headers.last().unwrap().height()
-            );
-            for chunk in new_headers.chunks(self.batch_size) {
-                exit_flag.poll().with_context(|| {
-                    format!(
-                        "indexing interrupted at height: {}",
-                        chunk.first().unwrap().height()
-                    )
-                })?;
-                let blockhashes: Vec<BlockHash> = chunk.iter().map(|h| h.hash()).collect();
-                let mut heights = chunk.iter().map(|h| h.height());
-
-                let mut batch = WriteBatch::default();
-                daemon.for_blocks(blockhashes, |_blockhash, block| {
-                    let height = heights.next().expect("unexpected block");
-                    self.observe_duration("block", || {
-                        index_single_block(block, height).extend(&mut batch)
-                    });
-                    self.stats.height.set("tip", height as f64);
-                })?;
-                let heights: Vec<_> = heights.collect();
-                assert!(
-                    heights.is_empty(),
-                    "some blocks were not indexed: {:?}",
-                    heights
-                );
-                batch.sort();
-                self.report_stats(&batch);
-                self.observe_duration("write", || self.store.write(batch));
-                self.stats
-                    .db_size
-                    .set("total", self.store.get_size()? as f64);
-            }
-            self.chain.update(new_headers);
         }
-        self.store.flush();
-        Ok(())
+        self.chain.update(new_headers);
+        Ok(false) // sync is not done
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        self.is_ready
     }
 }
 
