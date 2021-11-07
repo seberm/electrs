@@ -324,10 +324,19 @@ impl ScriptHashStatus {
         index: &Index,
         daemon: &Daemon,
         cache: &Cache,
+        cache_proofs: bool,
         outpoints: &mut HashSet<OutPoint>,
     ) -> Result<HashMap<BlockHash, Vec<TxEntry>>> {
         type TxPosition = usize; // transaction position within a block
         let mut result = HashMap::<BlockHash, HashMap<TxPosition, TxEntry>>::new();
+
+        let create_proof = |txids: &[Txid], pos: TxPosition| {
+            if cache_proofs {
+                Some(Proof::create(&txids, pos))
+            } else {
+                None
+            }
+        };
 
         let funding_blockhashes = index.limit_result(index.filter_by_funding(self.scripthash))?;
         self.for_new_blocks(funding_blockhashes, daemon, |blockhash, block| {
@@ -337,14 +346,16 @@ impl ScriptHashStatus {
                     return None;
                 }
                 let txid = funding_txids[pos];
-                let proof = Proof::create(&funding_txids, pos);
+                let proof = create_proof(&funding_txids, pos);
                 Some((pos, tx, txid, funding_outputs, proof))
             });
 
             let block_entries = result.entry(blockhash).or_default();
             for (pos, tx, txid, funding_outputs, proof) in found {
                 cache.add_tx(txid, move || tx);
-                cache.add_proof(blockhash, txid, proof);
+                if let Some(proof) = proof {
+                    cache.add_proof(blockhash, txid, proof);
+                }
                 outpoints.extend(make_outpoints(txid, &funding_outputs));
                 block_entries
                     .entry(pos)
@@ -363,14 +374,16 @@ impl ScriptHashStatus {
                     return None;
                 }
                 let txid = spending_txids[pos];
-                let proof = Proof::create(&spending_txids, pos);
+                let proof = create_proof(&spending_txids, pos);
                 Some((pos, tx, txid, spent_outpoints, proof))
             });
 
             let block_entries = result.entry(blockhash).or_default();
             for (pos, tx, txid, spent_outpoints, proof) in found {
                 cache.add_tx(txid, move || tx);
-                cache.add_proof(blockhash, txid, proof);
+                if let Some(proof) = proof {
+                    cache.add_proof(blockhash, txid, proof);
+                }
                 block_entries
                     .entry(pos)
                     .or_insert_with(|| TxEntry::new(txid))
@@ -435,12 +448,13 @@ impl ScriptHashStatus {
         mempool: &Mempool,
         daemon: &Daemon,
         cache: &Cache,
+        cache_proofs: bool,
     ) -> Result<()> {
         let mut outpoints: HashSet<OutPoint> = self.confirmed_outpoints(index.chain());
 
         let new_tip = index.chain().tip();
         if self.tip != new_tip {
-            let update = self.sync_confirmed(index, daemon, cache, &mut outpoints)?;
+            let update = self.sync_confirmed(index, daemon, cache, cache_proofs, &mut outpoints)?;
             self.confirmed.extend(update);
             self.tip = new_tip;
         }
