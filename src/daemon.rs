@@ -142,14 +142,6 @@ impl Daemon {
         Ok(Self { p2p, rpc })
     }
 
-    pub(crate) fn estimate_fee(&self, nblocks: u16) -> Result<Option<Amount>> {
-        Ok(self
-            .rpc
-            .estimate_smart_fee(nblocks, None)
-            .context("failed to estimate fee")?
-            .fee_rate)
-    }
-
     pub(crate) fn get_relay_fee(&self) -> Result<Amount> {
         Ok(self
             .rpc

@@ -25,7 +25,6 @@ use crate::{
 };
 
 const PROTOCOL_VERSION: &str = "1.4";
-const UNKNOWN_FEE: isize = -1; // (allowed by Electrum protocol)
 
 const UNSUBSCRIBED_QUERY_MESSAGE: &str = "your wallet uses less efficient method of querying electrs, consider contacting the developer of your wallet. Reason:";
 
@@ -233,12 +232,8 @@ impl Rpc {
         Ok(json!({"count": count, "hex": hex_headers, "max": max_count}))
     }
 
-    fn estimate_fee(&self, (nblocks,): (u16,)) -> Result<Value> {
-        Ok(self
-            .daemon
-            .estimate_fee(nblocks)?
-            .map(|fee_rate| json!(fee_rate.to_btc()))
-            .unwrap_or_else(|| json!(UNKNOWN_FEE)))
+    fn estimate_fee(&self, (_nblocks,): (u16,)) -> Result<Value> {
+        Ok(json!(0.00001))
     }
 
     fn relayfee(&self) -> Result<Value> {
