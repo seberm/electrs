@@ -233,7 +233,7 @@ impl Rpc {
     }
 
     fn estimate_fee(&self, (_nblocks,): (u16,)) -> Result<Value> {
-        Ok(json!(0.00001))
+        Ok(json!(0.000001))
     }
 
     fn relayfee(&self) -> Result<Value> {
